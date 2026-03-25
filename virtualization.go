@@ -108,6 +108,7 @@ type VirtualMachine struct {
 type machineState struct {
 	state       VirtualMachineState
 	stateNotify *infinity.Channel[VirtualMachineState]
+	closed      bool
 
 	mu sync.RWMutex
 }
@@ -214,10 +215,20 @@ func changeStateOnObserver(newStateRaw C.int, cgoHandleUintptr C.uintptr_t) {
 	// if caused panic, that's unexpected behavior.
 	v, _ := stateHandle.Value().(*machineState)
 	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	if v.closed {
+		return
+	}
+
 	newState := VirtualMachineState(newStateRaw)
 	v.state = newState
 	v.stateNotify.In() <- newState
-	v.mu.Unlock()
+
+	if newState == VirtualMachineStateStopped || newState == VirtualMachineStateError {
+		v.stateNotify.Close()
+		v.closed = true
+	}
 }
 
 // State represents execution state of the virtual machine.
