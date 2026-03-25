@@ -108,6 +108,7 @@ type VirtualMachine struct {
 type machineState struct {
 	state       VirtualMachineState
 	stateNotify *infinity.Channel[VirtualMachineState]
+	onTerminal  func() // called once when a terminal state is reached
 	closed      bool
 
 	mu sync.RWMutex
@@ -138,6 +139,11 @@ func NewVirtualMachine(config *VirtualMachineConfiguration) (*VirtualMachine, er
 	disconnectedIn := infinity.NewChannel[*disconnected]()
 	disconnectedOut := infinity.NewChannel[*DisconnectedError]()
 	disconnectedHandle := cgo.NewHandle(disconnectedIn)
+
+	machineState.onTerminal = func() {
+		disconnectedIn.Close()
+		disconnectedOut.Close()
+	}
 
 	v := &VirtualMachine{
 		id: cs.String(),
@@ -227,6 +233,9 @@ func changeStateOnObserver(newStateRaw C.int, cgoHandleUintptr C.uintptr_t) {
 
 	if newState == VirtualMachineStateStopped || newState == VirtualMachineStateError {
 		v.stateNotify.Close()
+		if v.onTerminal != nil {
+			v.onTerminal()
+		}
 		v.closed = true
 	}
 }
